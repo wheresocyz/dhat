@@ -1,3 +1,10 @@
 {
-  "bans": []
+  "bans": [
+    {
+      "userId": 8575023068,
+      "reason": "No reason provided",
+      "bannedBy": "07a9",
+      "timestamp": "2025-06-18T02:48:10.617Z"
+    }
+  ]
 }
