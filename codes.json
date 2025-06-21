@@ -39,5 +39,14 @@
       "Blood Effects": 100,
       "Knife Skins": 100
     }
+  },
+  "yo": {
+    "Reward": {
+      "Gun Skins": 0,
+      "Stomp Effects": 0,
+      "Streak Tags": 0,
+      "Blood Effects": 0,
+      "Knife Skins": 590
+    }
   }
 }
