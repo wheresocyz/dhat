@@ -48,5 +48,14 @@
       "Blood Effects": 0,
       "Knife Skins": 590
     }
+  },
+  "taiwan": {
+    "Reward": {
+      "Gun Skins": 50,
+      "Stomp Effects": 50,
+      "Streak Tags": 50,
+      "Blood Effects": 50,
+      "Knife Skins": 50
+    }
   }
 }
