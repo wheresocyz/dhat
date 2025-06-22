@@ -1,0 +1,741 @@
+-- @title: InventoryClient
+-- @author: jajita, greed
+-- @date: 1/28/2025
+-- @type: Client
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MarketplaceService = game:GetService("MarketplaceService")
+local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+
+local InventoryModule = require(ReplicatedStorage:WaitForChild("InventoryModule"))
+local ColorSequences = require(script:WaitForChild("ColorSequences"))
+local CrateColors = require(script:WaitForChild("CrateColors"))
+local MainModule = require(ReplicatedStorage:WaitForChild("MainModule"))
+
+local LocalPlayer = Players.LocalPlayer
+--local InitGlaze = ReplicatedStorage:WaitForChild("InitGlaze")
+local DataFolder = LocalPlayer:WaitForChild("DataFolder", 1/0)
+local Information = DataFolder:WaitForChild("Information")
+--local GlazedJajaa = Information:WaitForChild("GlazedJajaa")
+local InventoryData = Information:WaitForChild("InventoryData")
+local EquippedData = Information:WaitForChild("EquippedData")
+local MainScreenGui = LocalPlayer.PlayerGui:WaitForChild("MainScreenGui")
+local InventoryFrame = MainScreenGui:WaitForChild("Inventory")
+local BottomLeft = MainScreenGui.Crew.BottomLeft
+local TopBar = InventoryFrame:WaitForChild("Topbar")
+local MainEvent = ReplicatedStorage:WaitForChild("MainEvent")
+local InventoryScrollingFrames = InventoryFrame.Inventory.Box
+local SkinsScrollingFrames = InventoryFrame.GunSkins.Box
+local LoadedCategories: {string} = {}
+local CurrentSelections = {}
+local CratesFrame = InventoryFrame.Crates
+local CrateInformation = CratesFrame.Right
+local PossibleRoll = CrateInformation.PossibleRoll
+--local GlazeJajaaFrame = InventoryFrame.GlazeJajaa
+
+local CanOpenCrate = true
+local TabCooldown = false
+local CrateChangeCooldown = false
+local SelectionCooldown = false
+local CurrentTab = "Inventory" -- errr i don't like this..
+local CurrentCrate = "BloodFx10X" --""
+local CurrentCrateCategory = "Blood Effects" --""
+
+local GiftUI = MainScreenGui.GiftUI
+local PurchaseUI = MainScreenGui.PurchaseUI
+
+local ItemBuying = nil
+
+local function PromptItemPurchase(Type, ID, WtfIsIt)
+	if PurchaseUI.Visible or GiftUI.Visible then return end
+	if Type == "Product" and ID ~= nil and WtfIsIt ~= nil and ItemBuying == nil then
+		ItemBuying = {}
+		local MotherFricking = {Type, ID, WtfIsIt}
+		table.insert(ItemBuying, MotherFricking)
+		PurchaseUI.Visible = true
+		MainScreenGui.Inventory.Visible = false
+		PurchaseUI.ProductName.Text = WtfIsIt
+	end
+end
+
+PurchaseUI.Purchase.Activated:Connect(function()
+	if ItemBuying ~= nil then
+		MainScreenGui.GiftUI.User.Text = ""
+		MainEvent:FireServer("PurchaseSkinCrate", {tostring(ItemBuying[1][3]), LocalPlayer.Name}, "Unlock")
+		ItemBuying = nil
+		PurchaseUI.Visible = false
+	end
+end)
+
+PurchaseUI.Gift.Activated:Connect(function()
+	if ItemBuying[1][1] and ItemBuying[1][2] and ItemBuying[1][3] then
+		GiftUI.Visible = true
+		PurchaseUI.Visible = false
+		MainScreenGui.Inventory.Visible = false
+		GiftUI.ProductName.Text = ItemBuying[1][3]
+	end
+end)
+
+PurchaseUI.CloseJoin.Activated:Connect(function()
+	ItemBuying = nil
+	PurchaseUI.Visible = false
+end)
+
+GiftUI.CloseJoin.Activated:Connect(function()
+	ItemBuying = nil
+	GiftUI.Visible = false
+end)
+
+GiftUI.Gift.Activated:Connect(function()
+	local bro = GiftUI.User.Text
+	local GiftPlayer = nil
+	for _, player in pairs(Players:GetPlayers()) do
+		if string.lower(player.Name) == string.lower(bro) then
+			GiftPlayer = player
+			break
+		end
+	end
+	
+	if string.lower(bro) == string.lower(LocalPlayer.Name) then
+		MainEvent:FireServer("PurchaseSkinCrate", {ItemBuying[1][3], LocalPlayer.Name}, "Unlock")
+		GiftUI.Visible = true
+	else
+		if GiftPlayer ~= nil then
+			MainEvent:FireServer("PurchaseSkinCrate", {ItemBuying[1][3], bro}, "Unlock")
+		end
+	end
+	
+end)
+
+MainEvent.OnClientEvent:Connect(function(Arg)
+	if Arg == "yoBondyThxForBuyingReset" then
+		ItemBuying = nil
+		PurchaseUI.Visible = false
+		GiftUI.Visible = false
+	end
+end)
+
+local function DisplayItem(Category, Item, Frame)
+	local Path = InventoryModule[Category][Item]
+	if not Path then return end
+	if Path.Rarity == nil then return end
+
+	Frame.LeftBox.Delete["Confirm(MakeAppearAfterClickDelete)"].Visible = false
+	Frame.infoBox.Rarity.Text = string.upper(Path.Rarity)
+	Frame.infoBox.Rarity.UIGradient.Color = ColorSequences[Path.Rarity].colorSequence
+	Frame.infoBox.FXName.Text = string.upper(Item)
+	Frame.LeftBox.ItemDisplay.ItemImage.Image = Path.TextureID
+
+	Frame.infoBox:SetAttribute("CurrentCategory", Category)
+	Frame.infoBox:SetAttribute("CurrentItem", Item)
+
+	if Category == "Bullet Colors" and typeof(Path.Color) == "Color3" then
+		Frame.LeftBox.ItemDisplay.ItemImage.ImageColor3 = Path.Color
+	else
+		Frame.LeftBox.ItemDisplay.ItemImage.ImageColor3 = Color3.new(1, 1, 1)
+	end
+
+	local EquippedTable = HttpService:JSONDecode(EquippedData.Value)
+
+	if EquippedTable[Category] == Item then
+		Frame["Eq/Uneq"].Equip.EquipButton.Text = "UNEQUIP"
+	else
+		Frame["Eq/Uneq"].Equip.EquipButton.Text = "EQUIP"
+	end
+
+	Frame.LeftBox.ItemDisplay.UIStroke.UIGradient.Color = ColorSequences[Path.Rarity].colorSequence
+end
+
+local function ResetItemDisplay(Frame)
+	--Frame.LeftBox.Delete["Confirm(MakeAppearAfterClickDelete)"].Visible = false
+	Frame.infoBox.Rarity.Text = ""
+	Frame.infoBox.Rarity.UIGradient.Color = ColorSequence.new(Color3.fromRGB(25, 25, 25))
+	Frame.infoBox.FXName.Text = "EMPTY"
+	Frame.LeftBox.ItemDisplay.ItemImage.Image = ""
+	Frame.LeftBox.ItemDisplay.ItemImage.ImageColor3 = Color3.new(1, 1, 1)
+	Frame["Eq/Uneq"].Equip.EquipButton.Text = "EQUIP"
+	Frame.LeftBox.ItemDisplay.UIStroke.UIGradient.Color = ColorSequence.new(Color3.fromRGB(25, 25, 25))
+	Frame.infoBox:SetAttribute("CurrentCategory", nil)
+	Frame.infoBox:SetAttribute("CurrentItem", nil)
+end
+
+local function CreateItemFrame(Item, Category, Amount)
+	local Path = InventoryModule[Category][Item]
+	if not Path then return end
+	local Frame = string.match(Category, "Skins") and SkinsScrollingFrames or InventoryScrollingFrames
+	local Scrolling = Frame:FindFirstChild(Category)
+	if not Scrolling then return end
+	if Scrolling:FindFirstChild(Item) then return end
+
+	local ItemFrame = script.InventoryCard:Clone()
+	ItemFrame.Visible = true
+	ItemFrame.Name = Item
+	ItemFrame.ItemDisplay.Button.Image = Path.TextureID
+	ItemFrame.ItemDisplay.EffectName.Text = Item
+
+	if Amount ~= nil then
+		ItemFrame.ItemDisplay.Amount.Text = `x{Amount}`
+	end
+
+	if ColorSequences[Path.Rarity] then
+		ItemFrame.LayoutOrder = ColorSequences[Path.Rarity].LayoutOrder
+		ItemFrame.ItemDisplay.UIStroke.UIGradient.Color = ColorSequences[Path.Rarity].colorSequence
+	end
+
+	ItemFrame.ItemDisplay.Button.MouseButton1Click:Connect(function()
+		SoundService:PlayLocalSound(script.Click)
+
+		DisplayItem(Category, Item, Frame.Parent)
+	end)
+
+	if Category == "Bullet Colors" and typeof(Path.Color) == "Color3" then
+		ItemFrame.ItemDisplay.Button.ImageColor3 = Path.Color
+	end
+
+	ItemFrame.Parent = Scrolling
+end
+
+local function UpdateInventory()
+	local InventoryTable = HttpService:JSONDecode(InventoryData.Value)
+	local EquippedTable = HttpService:JSONDecode(EquippedData.Value)
+
+	for _, ScrollingFrame in {InventoryScrollingFrames, SkinsScrollingFrames} do
+		for _, Scrolling in pairs(ScrollingFrame:GetChildren()) do
+			if not Scrolling:IsA("ScrollingFrame") then
+				continue
+			end
+
+			local CategoryName = Scrolling.Name
+
+			for _, ItemFrame in pairs(Scrolling:GetChildren()) do
+				if not ItemFrame:IsA("Frame") then
+					continue
+				end
+
+				local ItemName = ItemFrame.Name
+
+				-- No longer owns item
+				if InventoryTable[CategoryName] == nil or InventoryTable[CategoryName] and InventoryTable[CategoryName][ItemName] == nil then
+					local Frame = Scrolling.Parent.Parent
+					if Frame.infoBox.FXName.Text == string.upper(ItemName) then
+						ResetItemDisplay(Frame)
+					end
+
+					ItemFrame:Destroy()
+				else
+					-- Update stuffz
+					local Path = InventoryTable[CategoryName][ItemName]
+
+					ItemFrame.ItemDisplay.Amount.Text = `x{Path.Amount}`
+				end
+			end
+		end
+
+		-- Update display
+		local Frame = ScrollingFrame.Parent
+		local Category = Frame.infoBox:GetAttribute("CurrentCategory")
+		local Item = Frame.infoBox:GetAttribute("CurrentItem")
+
+		if Category ~= nil and Item ~= nil then
+			DisplayItem(Category, Item, Frame)
+		end
+	end
+
+	-- Category added to inventory
+	for CategoryName, CategoryData in pairs(InventoryTable) do
+		for ItemName, ItemData in pairs(CategoryData) do
+			local Amount = ItemData.Amount or 1
+
+			CreateItemFrame(ItemName, CategoryName, Amount)
+		end
+	end
+end
+
+local function SpinCrate(FXType, wonFX)
+	local WasOpen = false
+
+	if InventoryFrame.Visible == true then
+		WasOpen = true
+		InventoryFrame.Visible = false
+	end
+
+	local spinUI = ReplicatedStorage.Content.PC.CrateSpin:Clone()
+	local winningCard
+	local wonFXPath = InventoryModule[FXType][wonFX]
+
+	local SpinSound = script.SpinSound:Clone()
+	SpinSound.Parent = script
+	SpinSound.Volume = 0
+	SpinSound:Play()
+
+	local SpinSoundTween = TweenService:Create(SpinSound, TweenInfo.new(0.8, Enum.EasingStyle.Linear), {
+		Volume = 0.5
+	})
+	SpinSoundTween:Play()
+
+	for SpinCount = 1, 60 do
+		local FXName, FXPath
+
+		if SpinCount == 50 then
+			FXName = wonFX
+			FXPath = InventoryModule[FXType][FXName]
+		else
+			local FXTable = {}
+			for FX, info in InventoryModule[FXType] do
+				if not info["CannotObtain"] then
+					table.insert(FXTable, FX)
+				end
+			end
+
+			if #FXTable > 0 then
+				FXName = FXTable[math.random(1, #FXTable)]
+				FXPath = InventoryModule[FXType][FXName]
+			end
+		end
+
+		local crateCard = ReplicatedStorage.Content.PC.CrateCard:Clone()
+		crateCard.Rarity.Text = FXPath['Rarity']
+		crateCard.Rarity.TextColor3 = InventoryModule.RarityColors[FXPath['Rarity']]
+		crateCard.Preview.ImageLabel.Image = FXPath['TextureID']
+
+		if FXType == "Bullet Colors" and typeof(FXPath.Color) == "Color3" then
+			crateCard.Preview.ImageLabel.ImageColor3 = FXPath["Color"]
+		end
+
+		crateCard.ItemName.Text = FXName
+
+		if FXPath.Rarity == "Legendary" or FXPath.Rarity == "Mythical" then
+			crateCard.UIStroke.UIGradient:Destroy()
+			local Color = script.DropColors[FXPath['Rarity']]:Clone()
+			Color.Spin.Enabled = true
+			Color.Parent = crateCard.UIStroke
+		else
+			crateCard.UIStroke.UIGradient.Color = ColorSequence.new(InventoryModule.RarityColors[FXPath['Rarity']], InventoryModule.RarityColors[FXPath['Rarity']])
+		end
+
+		crateCard.Parent = spinUI.UnboxingUI.Entries.Container.Holder.Contents
+
+		if SpinCount == 50 then
+			winningCard = crateCard
+		end
+	end
+
+	spinUI.Parent = script.Parent.Parent
+
+	local WaitTime = 0
+	local Skipped = false
+
+	local SkipConnection = spinUI.UnboxingUI.Skip.Toggle.Activated:Connect(function()
+		SoundService:PlayLocalSound(script.Click)
+		Skipped = true
+	end)
+
+	local SizeTween = TweenService:Create(spinUI.UnboxingUI.Entries.Container.Holder, TweenInfo.new(5, Enum.EasingStyle.Quad), 
+		{Position = UDim2.new(-7.54, 0,0, 0)})
+	SizeTween:Play()
+
+	if SizeTween.PlaybackState ~= Enum.PlaybackState.Playing then
+		SizeTween:Play()
+	end
+
+	while WaitTime < 5 and Skipped == false do
+		WaitTime += task.wait()
+	end
+
+	SkipConnection:Disconnect()
+
+	if Skipped then
+		SizeTween:Cancel()
+	else
+		task.wait(0.6)
+	end
+
+	if SpinSoundTween.PlaybackState == Enum.PlaybackState.Playing then
+		SpinSoundTween:Cancel()
+	end
+
+	for _, v in pairs(spinUI.UnboxingUI.Entries.Container.Holder.Contents:GetChildren()) do
+		if v:IsA("Frame") then
+			v:Destroy()
+		end
+	end
+
+	TweenService:Create(SpinSound, TweenInfo.new(0.4, Enum.EasingStyle.Linear), {
+		Volume = 0
+	}):Play()
+
+	TweenService:Create(spinUI.UnboxingUI.Entries, TweenInfo.new(0.4, Enum.EasingStyle.Linear), {
+		Size = UDim2.new(1, 0, 0, 0)
+	}):Play()
+
+	task.wait(0.4)
+	SpinSound:Destroy()
+
+	local RewardTemplate = ReplicatedStorage.Content.PC.RewardTemplate:Clone()
+	RewardTemplate.Box.ItemImage.Image = wonFXPath["TextureID"]
+	RewardTemplate.Rarity.Text = wonFXPath["Rarity"]
+
+	local Rarity = wonFXPath["Rarity"]
+	if FXType == "Bullet Colors" and typeof(wonFXPath["Color"]) == "Color3" then
+		RewardTemplate.Box.ItemImage.ImageColor3 = wonFXPath["Color"]
+	end
+
+	RewardTemplate.Rarity.TextColor3 = InventoryModule.RarityColors[Rarity]
+	RewardTemplate.ItemName.Text = wonFX
+
+	local Spin = script.DropColors.spin:Clone()
+	Spin.Parent = RewardTemplate.Ray
+	Spin.Enabled = true
+
+	if wonFXPath["Rarity"] == "Legendary" or wonFXPath["Rarity"] == "Mythical" then
+		local Ray_ = script.DropColors[wonFXPath["Rarity"]]:Clone()
+		Ray_.Parent = RewardTemplate.Ray
+		Ray_.Spin.Enabled = true
+	else
+		RewardTemplate.Ray.ImageColor3 = InventoryModule.RarityColors[wonFXPath["Rarity"]]
+	end
+
+	RewardTemplate.Parent = spinUI.UnboxingUI.RewardFrame
+
+	script.OpenSound:Play()
+
+	spinUI.UnboxingUI.Skip.BackgroundColor3 = Color3.fromRGB(89, 36, 37)
+	spinUI.UnboxingUI.Skip.Toggle.BackgroundColor3 = Color3.fromRGB(255, 101, 104)
+	spinUI.UnboxingUI.Skip.Toggle.TextLabel.Text = "CLOSE"
+	spinUI.UnboxingUI.Skip.Toggle.TextLabel.TextColor3 = Color3.fromRGB(125, 50, 52)
+
+	local tween = TweenService:Create(RewardTemplate, TweenInfo.new(0.4), {Position = UDim2.new(0.5, 0,-0.1, 0)})
+	tween:Play()
+
+	script.Swipe:Play()
+	script.Reward:Play()
+
+	task.wait(0.5)
+
+	local Closed = false
+
+	local CloseConnection = spinUI.UnboxingUI.Skip.Toggle.Activated:Connect(function()
+		SoundService:PlayLocalSound(script.Click)
+		Closed = true
+	end)
+
+	while Closed == false do
+		task.wait()
+	end
+
+	CloseConnection:Disconnect()
+	spinUI:Destroy()
+
+	if WasOpen then
+		InventoryFrame.Visible = true
+	end
+end
+
+local function CrateOpening(FXType, wonFX)
+	if CanOpenCrate then
+		CanOpenCrate = false
+		SpinCrate(FXType, wonFX)
+		CanOpenCrate = true
+	else
+		repeat task.wait() until CanOpenCrate
+
+		CrateOpening(FXType, wonFX)
+	end
+end
+
+local function ToggleInventoryUI(Visible)
+	if not Visible then
+		local InventoryTable = HttpService:JSONDecode(InventoryData.Value)
+
+		for CategoryName, CategoryData in pairs(InventoryTable) do
+			if not InventoryFrame.Inventory.LeftBox.InvSelection:FindFirstChild(CategoryName) then
+				continue
+			end
+
+			if table.find(LoadedCategories, CategoryName) then
+				continue
+			end
+			table.insert(LoadedCategories, CategoryName)
+
+			for ItemName, ItemData in pairs(CategoryData) do
+				local Amount = ItemData.Amount or 1
+
+				CreateItemFrame(ItemName, CategoryName, Amount)
+			end
+		end
+
+		UpdateInventory()
+		InventoryFrame.Visible = true
+	else
+		InventoryFrame.Visible = false
+	end
+end
+
+local function CrateClick(Button)
+	local CrateName = Button.Name
+	if CrateChangeCooldown then return end
+	if CurrentCrate == CrateName then return end
+	CrateChangeCooldown = true
+	CurrentCrate = CrateName
+
+	local LastImage = CrateInformation.Frame:FindFirstChild("ImageLabel")
+	if LastImage then
+		LastImage:Destroy()
+	end
+
+	Button.ItemDisplay.ImageLabel:Clone().Parent = CrateInformation.Frame
+
+	CrateInformation.Frame.ItemImage.Image = Button.ItemDisplay.Icon.Image
+	CrateInformation.infoBox.TextLabel.UIGradient.Color = Button.ItemDisplay.CrateName.UIGradient.Color
+	CrateInformation.Frame.UIStroke.UIGradient.Color = Button.ItemDisplay.UIStroke.UIGradient.Color
+	CrateInformation.infoBox.TextLabel.Text = Button.ItemDisplay.CrateName.Text
+	CrateInformation.infoBox.Price.Text = Button.ItemDisplay.Rarity.Text
+
+	local NewType = Button:GetAttribute("Type")
+
+	if CurrentCrateCategory ~= NewType then
+		local OldType = CurrentCrateCategory
+		local OldFrame = PossibleRoll:FindFirstChild(OldType)
+		local NewFrame = PossibleRoll:FindFirstChild(NewType)
+		local TweenTime = 0.35
+
+		if NewFrame then
+			NewFrame.Visible = true
+			TweenService:Create(PossibleRoll[NewType], TweenInfo.new(TweenTime, Enum.EasingStyle.Linear, Enum.EasingDirection.Out), {Position = UDim2.fromScale(0.5, 0.5)}):Play()
+		end
+
+		if OldFrame then
+			TweenService:Create(OldFrame, TweenInfo.new(TweenTime, Enum.EasingStyle.Linear, Enum.EasingDirection.Out), {Position = UDim2.fromScale(0.5, 1.5)}):Play()
+		end
+
+		task.wait(TweenTime)
+
+		if OldFrame then
+			OldFrame.Visible = false
+			OldFrame.Position = UDim2.fromScale(0.5, -0.5)
+		end
+	end
+
+	CurrentCrateCategory = NewType
+	CrateChangeCooldown = false
+end
+
+--local function UpdateGlazeCounter(GlazeAmount)
+--	for _, Label in {GlazeJajaaFrame.TotalGlaze, InventoryFrame.TotalGlaze} do
+--		Label.Text = `Total glazers: {MainModule.AddComma(GlazeAmount) or GlazeAmount}`
+--	end
+--end
+
+-- Crates UI
+for _, Box in {CratesFrame.Box, CratesFrame.BottomBox} do
+	for _, Button in pairs(Box.ScrollingFrame:GetChildren()) do
+		if not Button:IsA("ImageButton") then
+			continue
+		end
+
+		Button.MouseButton1Click:Connect(function()
+			SoundService:PlayLocalSound(script.Click)
+
+			CrateClick(Button)
+		end)
+	end
+end
+
+-- Load all items in PossibleRoll
+for _, v in pairs(PossibleRoll:GetChildren()) do
+	if not InventoryModule[v.Name] then
+		continue
+	end
+
+	for CategoryName, CategoryData in pairs(InventoryModule[v.Name]) do
+		if CategoryData.CannotObtain then continue end
+
+		local Card = script.CrateCard:Clone()
+		Card.ItemIcon.Image = CategoryData.TextureID
+		Card.RarityColor.UIGradient.Color = CrateColors[CategoryData.Rarity].colorSequence
+		Card.LayoutOrder = CrateColors[CategoryData.Rarity].LayoutOrder
+
+		if CategoryName == "Bullet Colors" then
+			Card.ItemIcon.ImageColor3 = CategoryData.Color
+		end
+
+		Card.Parent = v
+	end
+end
+
+CrateInformation.Purchase.TextButton.MouseButton1Click:Connect(function()
+	--[[if CurrentCrate == "" then -- dont need dis anymore coz i skibidi rizzler :d
+		_G.SendNotification({"Crates", "Select a category"})
+		return
+	end]]
+
+	SoundService:PlayLocalSound(script.Click)
+	PromptItemPurchase("Product", ReplicatedStorage.Monetization.DevProducts[CurrentCrate].Value, ReplicatedStorage.Monetization.DevProducts[CurrentCrate].Name)
+	--MarketplaceService:PromptProductPurchase(LocalPlayer, ReplicatedStorage.Monetization.DevProducts[CurrentCrate].Value)
+end)
+
+-- Switch tabs
+for _, Button in TopBar:GetChildren() do
+	if not Button:IsA("Frame") or Button.Name == "Merge" then
+		continue
+	end
+
+	Button.TextButton.MouseButton1Down:Connect(function()
+		SoundService:PlayLocalSound(script.Click)
+
+		if TabCooldown or CurrentTab == Button.Name then
+			return
+		end
+
+		TabCooldown = true
+
+		local NewTab, OldTab = Button.Name, CurrentTab
+
+		InventoryFrame[NewTab].Visible = true
+
+		TweenService:Create(InventoryFrame[OldTab], TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.fromScale(-1, 0.142)}):Play()
+		TweenService:Create(InventoryFrame[NewTab], TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.fromScale(0, 0.142)}):Play()
+
+		task.wait(0.4)
+
+		InventoryFrame[OldTab].Visible = false
+		InventoryFrame[OldTab].Position = UDim2.fromScale(1, 0.142)
+
+		CurrentTab = Button.Name
+		TabCooldown = false
+	end)
+end
+
+-- Switch selections inside tabs
+for _, Frame in {InventoryFrame.Inventory, InventoryFrame.GunSkins} do
+	for i, v in Frame.Box:GetChildren() do
+		if v:IsA("ScrollingFrame") and v.Visible then
+			CurrentSelections[Frame.Name] = v.Name
+			break
+		end
+	end
+
+	for _, SelectionButton in Frame.LeftBox.InvSelection:GetChildren() do
+		if not SelectionButton:IsA("Frame") then
+			continue
+		end
+
+		SelectionButton.TextButton.MouseButton1Down:Connect(function()
+			SoundService:PlayLocalSound(script.Click)
+
+			local CurrentSelected = CurrentSelections[Frame.Name]
+
+			if SelectionCooldown or CurrentSelected == SelectionButton.Name then
+				return
+			end
+
+			SelectionCooldown = true
+
+			local OldFrame = Frame.Box[CurrentSelected]
+			local NewFrame = Frame.Box[SelectionButton.Name]
+
+			NewFrame.Visible = true
+
+			TweenService:Create(NewFrame, TweenInfo.new(0.3, Enum.EasingStyle.Linear, Enum.EasingDirection.Out), {Position = UDim2.fromScale(0.501, 0.495)}):Play()
+			TweenService:Create(OldFrame, TweenInfo.new(0.3, Enum.EasingStyle.Linear, Enum.EasingDirection.Out), {Position = UDim2.fromScale(0.5, 1.5)}):Play()
+
+			task.wait(0.3)
+
+			CurrentSelections[Frame.Name] = SelectionButton.Name
+
+			OldFrame.Visible = false
+			OldFrame.Position = UDim2.fromScale(0.5, -0.5)
+
+			SelectionCooldown = false
+		end)
+	end
+end
+
+-- Equip
+for _, Frame in {InventoryFrame.Inventory, InventoryFrame.GunSkins} do
+	local EquipButton = Frame["Eq/Uneq"].Equip.EquipButton
+
+	EquipButton.Activated:Connect(function()
+		SoundService:PlayLocalSound(script.Click)
+
+		local Category = Frame.infoBox:GetAttribute("CurrentCategory")
+		local Item = Frame.infoBox:GetAttribute("CurrentItem")
+
+		if Category == nil or Item == nil then
+			return
+		end
+
+		MainEvent:FireServer("EquipWeaponSkins", Category, Item)
+	end)
+end
+
+-- Network
+MainEvent.OnClientEvent:Connect(function(Name, ...)
+	if Name == "CrateOpening" then
+		CrateOpening(...)
+		UpdateInventory();
+	elseif Name == "UpdateEquip" then
+		UpdateInventory();
+	--elseif Name == "UpdateGlazeCount" then
+	--	local GlazeAmount = ...
+
+	---	UpdateGlazeCounter(GlazeAmount)
+	---elseif Name == 'UpdateGlazeVisible' then
+	---	GlazeJajaaFrame.Visible = ... or false
+	end
+end)
+
+-- Display UI
+BottomLeft.Inventory.Activated:Connect(function()
+	SoundService:PlayLocalSound(script.Click)
+	if GiftUI.Visible or PurchaseUI.Visible then return end
+	ToggleInventoryUI(InventoryFrame.Visible)
+end)
+
+-- Codes
+InventoryFrame.Codes.Enter.Activated:Connect(function()
+	MainEvent:FireServer("EnterPromoCode", InventoryFrame.Codes.TextBox.Text)
+end)
+
+-- Inventory updated
+for _, v in {InventoryData, EquippedData} do
+	v:GetPropertyChangedSignal("Value"):Connect(function()
+		UpdateInventory()
+	end)
+end
+
+-- Jajaa glaze
+---for _, v in {GlazeJajaaFrame.Options.Glaze, GlazeJajaaFrame.Options.Glaze.Toggle} do
+---	v.MouseButton1Click:Connect(function()
+	---	MainEvent:FireServer("GlazeTheKing")
+---	end)
+--end
+
+--local ButtonWidthScale = GlazeJajaaFrame.Options.No.Size.X.Scale
+--local ButtonHeightScale = GlazeJajaaFrame.Options.No.Size.Y.Scale
+
+--for _, v in {GlazeJajaaFrame.Options.No, GlazeJajaaFrame.Options.No.Toggle} do
+	--v.MouseButton1Click:Connect(function()
+--		local RandomX = Random.new():NextNumber(0, 1.5) * (1.3 - ButtonWidthScale);
+	--	local RandomY = Random.new():NextNumber(0.33, 1.5) * (1.3 - ButtonHeightScale);
+
+	--	GlazeJajaaFrame.Options.No.Position = UDim2.fromScale(RandomX, RandomY)
+	--end)
+--d
+
+--task.spawn(function()
+---	local GlazeAmount = InitGlaze:InvokeServer()
+
+---	UpdateGlazeCounter(GlazeAmount)
+---end)
+
+---GlazeJajaaFrame.Visible = not GlazedJajaa.Value
+---InventoryFrame.TotalGlaze.Visible = table.find({472813752, 7858797798}, LocalPlayer.UserId) ~= nil
+
+---GlazeJajaaFrame.Ray.spin.Enabled = GlazeJajaaFrame.Visible
+--GlazeJajaaFrame:GetPropertyChangedSignal("Visible"):Connect(function()
+--	GlazeJajaaFrame.Ray.spin.Enabled = GlazeJajaaFrame.Visible
+--end)
